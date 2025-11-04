@@ -208,3 +208,6 @@ __marimo__/
 
 # Runlock-AI Specific
 logs/
+
+# IntelliJ and PyCharm
+.idea/
