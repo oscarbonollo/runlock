@@ -1,34 +1,75 @@
-# Runlock-AI 🔒  
-**Deterministic AI Test Framework**
+# Runlock
 
-Runlock-AI is an open, verifiable framework for testing large language models deterministically — token-for-token, bit-for-bit.
+Deterministic Execution Fingerprinting for Neural Models
 
-## 🌱 Philosophy
-Every model execution should be:
-- **Reproducible** – same prompt → same output, every time.  
-- **Transparent** – seeds, environment, and system states are logged automatically.  
-- **Auditable** – outputs hashed for proof, with no hidden stochastic behavior.  
+Runlock is a minimal framework for producing deterministic, auditable execution fingerprints of neural language models.
 
-Runlock-AI’s mission is to make determinism a **first-class engineering primitive** for AI systems.
+Given a fixed interaction, it answers a single question: *did this model execute identically in this context?*
+
+It does so by combining deterministic decoding, cryptographic hashing of outputs, lightweight internal activation fingerprints, and structured JSON logging.
+
+It is a harness built to be lightweight and minimal in scope.
+
+Runlock **is** an execution fingerprinting framework that combines output hashes and internal activation probes to support reproducibility and forensic analysis of LLM executions, with an emphasis on determinism and traceability.  
+Runlock **is not** intended as a benchmarking tool, an evaluation suite, or a substitute for an interpretability framework.
 
 ---
 
-## ⚙️ Structure
+## Philosophy
+
+Runlock is a framework built on a rigid set of principles:
+
+**Determinism first**  
+Fixed seeds, fixed decoding strategy, fixed execution paths.
+
+**Minimal surface area**  
+No chat templates, no system prompts, and no implicit or untracked execution state.
+
+**Auditable by default**  
+Every run produces a structured log with hashes, timing, and environment metadata.
+
+**Execution, not interpretation**  
+Runlock fingerprints how a model executed, not necessarily what its outputs mean.
+
+---
+
+## Core Scripts
+
+This repository intentionally contains only two canonical execution paths:
 
 | File | Description |
-|------|--------------|
-| `runlock_logger.py` | Modular JSON-based logging utility (shared across all versions). |
-| `det_core_deterministic_base_cpu.py` | First deterministic single-turn proof-of-concept. |
-| `det_core_deterministic_fast_cpu.py` | Optimized single-turn CPU version. |
-| `det_multi_turn_baseline_cpu_forensic.py` | Forensic multi-turn baseline (first verified reproducible chat). |
-| `det_multi_turn_baseline_cpu_forensic_fast.py` | Thread-tuned fast version, same hashes. |
-| `det_multi_turn_baseline_cpu_forensic_fast_v2.py` | Modular JSON-logged version, verified deterministic. |
+|------|-------------|
+| `det_multi_turn_baseline_cpu_forensic_fast_v4_float.py` | CPU reference implementation. Maximally deterministic and cross-platform. |
+| `det_multi_turn_baseline_gpu_forensic_fast_v1_float.py` | GPU reference implementation. High-performance, best-effort deterministic. |
+
+All other files and earlier experiments have been archived.
 
 ---
 
-## 🧪 Reproducibility Test
+## What a Run Produces
 
-Run a two-turn deterministic session:
+Each run generates the following artifacts:
+
+- Per-turn SHA-256 token hashes  
+- A conversation hash (hash of per-turn hashes)  
+- Per-turn runtime measurements  
+- Environment metadata (Python, Torch, platform, device)  
+- A lightweight internal activation fingerprint (float probe)  
+- A structured JSON log written to `./logs`
+
+Combined, these artifacts form an execution fingerprint.
+
+---
+
+## Usage
+Run the CPU reference baseline:
 
 ```bash
-python src/det_multi_turn_baseline_cpu_forensic_fast_v2.py
+python det_multi_turn_baseline_cpu_forensic_fast_v4_float.py
+```
+
+Run the GPU reference baseline:
+
+```bash
+python det_multi_turn_baseline_gpu_forensic_fast_v1_float.py
+```
