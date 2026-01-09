@@ -1,17 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-Runlock environment snapshot (env_details.py)
+Runlock env logger - does not auto run, need to invoke manually via python cli
 
-Captures Python, OS, GPU/driver details, and core ML stack into a single JSON file.
-Intended for configuration parity and execution forensics across Windows and Linux
-(including Amazon Linux).
-
-Includes:
-- Python + OS details
+Captures:
+- Python Version
+- OS details
 - Torch / CUDA / cuDNN configuration
-- GPU device properties (via torch)
-- NVIDIA driver/GPU summary (process-free, via nvidia-smi)
-- pip freeze (exact dependency set)
+- GPU device properties
+- NVIDIA driver/GPU summary
+- pip freeze
 
 Output:
 - ./logs/env_details.json
