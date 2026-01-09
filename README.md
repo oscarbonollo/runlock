@@ -65,11 +65,11 @@ Combined, these artifacts form an execution fingerprint.
 Run the CPU reference baseline:
 
 ```bash
-python det_multi_turn_baseline_cpu_forensic_fast_v4_float.py
+python runlock_cpu_baseline_.py
 ```
 
 Run the GPU reference baseline:
 
 ```bash
-python det_multi_turn_baseline_gpu_forensic_fast_v1_float.py
+python runlock_gpu_baseline_.py
 ```

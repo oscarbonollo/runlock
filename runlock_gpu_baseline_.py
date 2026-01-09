@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-det_multi_turn_baseline_gpu_forensic_fast_v1_float.py
+runlock_gpu_baseline_.py
 
 Runlock: deterministic multi-turn harness (GPU variant, fast baseline) with
 activation probes.
