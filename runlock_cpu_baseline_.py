@@ -1,23 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-det_multi_turn_baseline_cpu_forensic_fast_v3.py
-
-Runlock: deterministic multi-turn execution fingerprinting harness (CPU reference).
-
-- No system prompt, no chat template.
-- Pure token-to-token deterministic generation on CPU.
-- Fixed multi-turn dialog with:
-    * Per-turn token hashes (SHA-256)
-    * Conversation hash (hash of per-turn hashes)
-    * Timing per turn and total runtime
-    * Environment metadata (Python, Torch, platform, threads)
-    * Lightweight internal activation fingerprints (float probes)
-    * Structured JSON logging written to ./logs
-
-This script serves as the CPU reference implementation for Runlock.
-It is designed to be maximally deterministic and reproducible across platforms.
-"""
-
 # ------------------------------------------------------------
 # Imports
 # ------------------------------------------------------------
@@ -53,7 +34,7 @@ os.environ.setdefault("MKL_NUM_THREADS", "4")
 # Parameters
 # ------------------------------------------------------------
 SEED = 42
-MODEL_ID = "mistralai/Mistral-7B-Instruct-v0.2"
+MODEL_ID = "microsoft/phi-2"  # CHANGED: was "mistralai/Mistral-7B-Instruct-v0.2"
 MAX_NEW = 128
 MAX_TURNS = 32
 
@@ -86,20 +67,29 @@ torch.set_flush_denormal(True)
 @lru_cache(maxsize=1)
 def load_model_and_tokenizer():
     """
-    Load tokenizer and model once on CPU in full precision.
-
+    Load tokenizer and model once on CPU
     Cached so subsequent runs in the same process do not reload weights.
     """
     print("Loading model and tokenizer...")
-    tok = AutoTokenizer.from_pretrained(MODEL_ID)
 
+    # CHANGED: Phi-2 often requires trust_remote_code=True depending on transformers version
+    # CHANGED: use_fast=False to remove variability between fast/slow tokenizer implementations
+    tok = AutoTokenizer.from_pretrained(
+        MODEL_ID,
+        trust_remote_code=True,
+        use_fast=False,
+    )
+
+    # Keep: Phi-2 commonly has no pad token; safest deterministic default is pad=eos
     if tok.pad_token_id is None and tok.eos_token_id is not None:
         tok.pad_token = tok.eos_token
 
+    # CHANGED: trust_remote_code=True for Phi-2 compatibility
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_ID,
         device_map="cpu",
         torch_dtype=torch.float32,
+        trust_remote_code=True,
     )
     model.eval()
 
@@ -128,7 +118,7 @@ def dialog_hash(turn_hashes):
 
 def build_prompt(history):
     """
-    Deterministic prompt assembly with no templates or roles beyond plain text.
+    Deterministic prompt assembly with no templating or roles beyond plain text.
     """
     prompt = ""
     for turn in history:
@@ -140,7 +130,7 @@ def build_prompt(history):
 def compute_float_probe(model, token_ids: np.ndarray):
     """
     Compute a lightweight activation fingerprint from the final hidden layer
-    at start, midpoint, and end token positions.
+    at start, midpoint, and end of computing of token positions.
     """
     seq_len = int(token_ids.shape[0])
     if seq_len == 0:
@@ -206,8 +196,10 @@ def generate_turn(tok, model, history):
         )
     elapsed = time.perf_counter() - start
 
-    seq = out.sequences[0].detach().cpu().numpy()
-    text = tok.decode(out.sequences[0], skip_special_tokens=True)
+    # CHANGED: decode from the CPU-copied tensor to keep the forensic artifact consistent
+    seq_t = out.sequences[0].detach().to("cpu")
+    seq = seq_t.numpy()
+    text = tok.decode(seq_t, skip_special_tokens=True)
 
     float_probe = compute_float_probe(model, seq)
 
@@ -253,6 +245,10 @@ def run_dialog(user_turns):
             "MKL_NUM_THREADS": os.environ.get("MKL_NUM_THREADS"),
         },
         "model_id": MODEL_ID,
+        # ADDED: make padding policy auditable (helps future batching/agentic stacks)
+        "pad_token_id": tok.pad_token_id,
+        "eos_token_id": tok.eos_token_id,
+        "pad_equals_eos": (tok.pad_token_id == tok.eos_token_id),
     }
 
     return {
