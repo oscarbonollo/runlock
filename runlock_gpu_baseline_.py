@@ -1,20 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-runlock_gpu_baseline_.py
-
-Runlock: deterministic multi-turn harness (GPU variant, fast baseline) with
-activation probes.
-
-Goal:
-- Stay as close as possible to the original CPU architecture.
-- Run the same deterministic-style harness on CUDA GPU (best-effort).
-
-Notes on determinism:
-- GPU determinism is best-effort. Bit-identical results across different machines
-  are NOT guaranteed unless GPU model + driver + CUDA + PyTorch stack match.
-- This script keeps the same prompt assembly, hashing, logging, and probe structure.
-"""
-
 # ------------------------------------------------------------
 # Imports
 # ------------------------------------------------------------
@@ -37,13 +21,10 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 # Environment setup (GPU, stable-ish determinism)
 # ------------------------------------------------------------
 
-# IMPORTANT: Do NOT force CPU here.
-# (In the CPU baseline, CUDA_VISIBLE_DEVICES="" was set; we remove that for GPU.)
-
 # Avoid tokenizer parallelism noise
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-# Fixed threads (still relevant for tokenizer and any CPU-side work)
+# Fixed thread counts (still relevant for tokenizer and any CPU-side work)
 os.environ.setdefault("OMP_NUM_THREADS", "4")
 os.environ.setdefault("MKL_NUM_THREADS", "4")
 
@@ -55,21 +36,23 @@ os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 # Parameters
 # ------------------------------------------------------------
 SEED = 42
-MODEL_ID = "mistralai/Mistral-7B-Instruct-v0.2"
+MODEL_ID = "microsoft/phi-2"
 MAX_NEW = 128
 MAX_TURNS = 32
 
-# Strictly GPU (you asked for GPU). If you prefer fallback-to-CPU, change this.
-if not torch.cuda.is_available():
-    raise RuntimeError("CUDA is not available. Install CUDA-enabled PyTorch and ensure an NVIDIA GPU is present.")
-
-DEVICE = torch.device("cuda")
-
-# The default dialog we’ve been using as the “genesis” test (2-turn grounding)
+# Default two-turn grounding dialog
 DEFAULT_USER_TURNS = [
     "What is 2+2?",
     "Explain the reasoning in one sentence.",
 ]
+
+# Strictly GPU (you asked for GPU). If you prefer fallback-to-CPU, change this.
+if not torch.cuda.is_available():
+    raise RuntimeError(
+        "CUDA is not available. Install CUDA-enabled PyTorch and ensure an NVIDIA GPU is present."
+    )
+
+DEVICE = torch.device("cuda")
 
 # ------------------------------------------------------------
 # Determinism setup
@@ -83,7 +66,7 @@ def reset_seeds(seed: int = SEED) -> None:
     torch.cuda.manual_seed_all(seed)
 
 
-# Global deterministic-ish config (done once at import time)
+# Global deterministic-ish configuration
 reset_seeds(SEED)
 
 # Enforce deterministic algorithms where supported
@@ -107,12 +90,17 @@ torch.set_flush_denormal(True)
 @lru_cache(maxsize=1)
 def load_model_and_tokenizer():
     """
-    Load tokenizer + model once, on GPU, in full precision (fp32).
+    Load tokenizer and model once on GPU in full precision (fp32).
 
-    Cached so subsequent runs in the same process don't reload weights.
+    Cached so subsequent runs in the same process do not reload weights.
     """
     print("Loading model and tokenizer...")
-    tok = AutoTokenizer.from_pretrained(MODEL_ID)
+
+    tok = AutoTokenizer.from_pretrained(
+        MODEL_ID,
+        trust_remote_code=True,
+        use_fast=False,
+    )
 
     # Ensure PAD is defined and deterministic
     if tok.pad_token_id is None and tok.eos_token_id is not None:
@@ -121,11 +109,12 @@ def load_model_and_tokenizer():
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_ID,
         torch_dtype=torch.float32,
+        trust_remote_code=True,
     )
     model.to(DEVICE)
     model.eval()
 
-    # Warm-up to initialize kernels (helps stabilize first-run timing)
+    # Warm-up call to stabilize first-run behavior
     _ = model.generate(**tok("hi", return_tensors="pt").to(DEVICE), max_new_tokens=1)
 
     return tok, model
@@ -135,18 +124,13 @@ def load_model_and_tokenizer():
 # ------------------------------------------------------------
 
 def hash_tokens(ids: np.ndarray) -> str:
-    """
-    Hash a sequence of token IDs using SHA-256.
-    Ensures consistent dtype and byte layout before hashing.
-    """
+    """Hash a sequence of token IDs using SHA-256."""
     arr = ids.astype(np.int32, copy=False)
     return hashlib.sha256(arr.tobytes()).hexdigest()
 
 
 def dialog_hash(turn_hashes):
-    """
-    Compute a stable conversation fingerprint from the sequence of per-turn hashes.
-    """
+    """Compute a stable conversation fingerprint from per-turn hashes."""
     h = hashlib.sha256()
     for th in turn_hashes:
         h.update(bytes.fromhex(th))
@@ -155,38 +139,27 @@ def dialog_hash(turn_hashes):
 
 def build_prompt(history):
     """
-    Simple deterministic prompt assembly.
-    No roles or templates—just plain concatenation.
+    Deterministic prompt assembly with no templating or roles beyond plain text.
     """
     prompt = ""
     for turn in history:
         prompt += f"{turn['role'].capitalize()}: {turn['content']}\n"
-    prompt += "Assistant:"  # model continues from here
+    prompt += "Assistant:"
     return prompt.strip()
 
 
 def compute_float_probe(model, token_ids: np.ndarray):
     """
-    Compute drift-sensitive float activation summary at start / mid / end
-    token positions, using the last hidden layer.
-
-    Returns JSON-serializable dict:
-        {
-          "layer": "last",
-          "positions": {
-            "start": {"idx": 0, "mean": ..., "std": ..., "l2": ...},
-            "mid":   {"idx": m, "mean": ..., "std": ..., "l2": ...},
-            "end":   {"idx": n, "mean": ..., "std": ..., "l2": ...}
-          }
-        }
+    Compute a lightweight activation fingerprint from the final hidden layer
+    at start, midpoint, and end token positions.
     """
     seq_len = int(token_ids.shape[0])
     if seq_len == 0:
         return None
 
     idx_start = 0
-    idx_end = seq_len - 1
     idx_mid = seq_len // 2
+    idx_end = seq_len - 1
 
     input_ids = torch.tensor(token_ids, dtype=torch.long, device=DEVICE).unsqueeze(0)
     attention_mask = torch.ones_like(input_ids, dtype=torch.long, device=DEVICE)
@@ -200,41 +173,31 @@ def compute_float_probe(model, token_ids: np.ndarray):
             return_dict=True,
         )
 
-    last_hidden = out.hidden_states[-1][0]  # [L, H]
+    last_hidden = out.hidden_states[-1][0]
 
-    def stats_for_idx(idx: int):
-        v = last_hidden[idx]  # [H]
-        v_mean = float(v.mean().item())
-        v_std = float(v.std(unbiased=False).item())
-        v_l2 = float(torch.linalg.norm(v).item())
+    def stats(idx: int):
+        v = last_hidden[idx]
         return {
             "idx": int(idx),
-            "mean": round(v_mean, 8),
-            "std": round(v_std, 8),
-            "l2": round(v_l2, 8),
+            "mean": round(float(v.mean().item()), 8),
+            "std": round(float(v.std(unbiased=False).item()), 8),
+            "l2": round(float(torch.linalg.norm(v).item()), 8),
         }
 
     return {
         "layer": "last",
         "positions": {
-            "start": stats_for_idx(idx_start),
-            "mid": stats_for_idx(idx_mid),
-            "end": stats_for_idx(idx_end),
+            "start": stats(idx_start),
+            "mid": stats(idx_mid),
+            "end": stats(idx_end),
         },
     }
 
 
 def generate_turn(tok, model, history):
     """
-    Run one deterministic(-ish) generation step from current history on GPU.
-
-    Returns:
-        text: full decoded sequence (prompt + new tokens)
-        token_ids: np.ndarray of token IDs for the full sequence
-        elapsed: runtime in seconds
-        float_probe: activation summary dict (or None)
+    Run a single deterministic generation step.
     """
-    # Reset seeds per turn to keep any RNG use stable (even though we use greedy decoding)
     reset_seeds(SEED)
 
     prompt = build_prompt(history)
@@ -249,6 +212,7 @@ def generate_turn(tok, model, history):
             max_new_tokens=MAX_NEW,
             pad_token_id=tok.pad_token_id,
             eos_token_id=tok.eos_token_id,
+            use_cache=False,  # CHANGED: disable KV-cache to match the CPU "no caching" intent
             return_dict_in_generate=True,
             output_scores=False,
         )
@@ -261,7 +225,6 @@ def generate_turn(tok, model, history):
     # Decode on CPU tensor (keeps behavior consistent)
     text = tok.decode(seq_t, skip_special_tokens=True)
 
-    # Activation probe (runs model forward on GPU)
     float_probe = compute_float_probe(model, seq)
 
     return text, seq, elapsed, float_probe
@@ -271,17 +234,6 @@ def generate_turn(tok, model, history):
 # ------------------------------------------------------------
 
 def run_dialog(user_turns):
-    """
-    Run a deterministic multi-turn dialog (GPU).
-
-    Returns:
-        {
-          "turns": [ { per-turn data } ],
-          "conversation_hash": str,
-          "total_runtime": float,
-          "meta": { environment metadata }
-        }
-    """
     tok, model = load_model_and_tokenizer()
 
     history = []
@@ -308,7 +260,6 @@ def run_dialog(user_turns):
     conv_hash = dialog_hash([t["token_hash"] for t in per_turn])
     total_time = sum(t["runtime_s"] for t in per_turn)
 
-    # Metadata: keep original + add GPU details
     meta = {
         "python_version": sys.version.split(" ")[0],
         "torch_version": torch.__version__,
@@ -319,6 +270,9 @@ def run_dialog(user_turns):
             "MKL_NUM_THREADS": os.environ.get("MKL_NUM_THREADS"),
         },
         "model_id": MODEL_ID,
+        "pad_token_id": tok.pad_token_id,
+        "eos_token_id": tok.eos_token_id,
+        "pad_equals_eos": (tok.pad_token_id == tok.eos_token_id),
         "device": str(DEVICE),
         "cuda": {
             "cuda_available": True,
@@ -350,9 +304,6 @@ def run_dialog(user_turns):
 # ------------------------------------------------------------
 
 def write_runlock_log(script_name: str, run_result: dict) -> str:
-    """
-    Write a structured JSON log for the run.
-    """
     os.makedirs("logs", exist_ok=True)
 
     conv_hash = run_result["conversation_hash"]
@@ -360,9 +311,7 @@ def write_runlock_log(script_name: str, run_result: dict) -> str:
     model_id = run_result["meta"]["model_id"]
 
     safe_model = model_id.replace("/", "-")
-    log_name = (
-        f"{script_name}__{safe_model}__{conv_hash[:12]}__{total_time:.2f}s.json"
-    )
+    log_name = f"{script_name}__{safe_model}__{conv_hash[:12]}__{total_time:.2f}s.json"
     log_path = os.path.join("logs", log_name)
 
     payload = {
@@ -384,11 +333,7 @@ def write_runlock_log(script_name: str, run_result: dict) -> str:
 # ------------------------------------------------------------
 
 if __name__ == "__main__":
-    user_turns = DEFAULT_USER_TURNS
-
-    result = run_dialog(user_turns)
-
-    print("=== FORENSIC DETERMINISTIC MULTI-TURN RUN (GPU v1 + PROBES) ===\n")
+    result = run_dialog(DEFAULT_USER_TURNS)
 
     for t in result["turns"]:
         print(f"[Turn {t['turn']}]")
@@ -398,8 +343,7 @@ if __name__ == "__main__":
             f"HASH: {t['token_hash']} | LEN: {t['len_tokens']} | "
             f"TIME: {t['runtime_s']:.2f}s"
         )
-        print(f"Probe: {t['float_probe']}")
-        print()
+        print(f"Probe: {t['float_probe']}\n")
 
     print(f"CONVERSATION_HASH: {result['conversation_hash']}")
     print(f"TOTAL_RUNTIME: {result['total_runtime']:.2f} seconds")
@@ -407,4 +351,4 @@ if __name__ == "__main__":
     script_name = os.path.splitext(os.path.basename(__file__))[0]
     log_path = write_runlock_log(script_name, result)
 
-    print(f"[✔] Runlock log written to: {log_path}")
+    print(f"Runlock log written to: {log_path}")

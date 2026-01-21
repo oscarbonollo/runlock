@@ -208,7 +208,6 @@ def generate_turn(tok, model, history):
 # ------------------------------------------------------------
 # Run deterministic dialog
 # ------------------------------------------------------------
-
 def run_dialog(user_turns):
     tok, model = load_model_and_tokenizer()
 
@@ -261,7 +260,6 @@ def run_dialog(user_turns):
 # ------------------------------------------------------------
 # JSON logging
 # ------------------------------------------------------------
-
 def write_runlock_log(script_name: str, run_result: dict) -> str:
     os.makedirs("logs", exist_ok=True)
 
