@@ -75,3 +75,10 @@ install: venv
 .PHONY: clean
 clean:
 	rm -rf $(VENV_DIR)
+
+.PHONY: help
+help:
+	@echo "Usage:"
+	@echo "  make PY=python install        (Windows / Conda)"
+	@echo "  make PY=python3.10 install    (Ubuntu 22.04)"
+	@echo "  make PY=/path/to/python install"
