@@ -6,11 +6,13 @@ Given a fixed interaction, it provides a lightweight set of tools to answer a si
 
 *"Did this model execute identically in this context?"*
 
-Runlock approaches this by combining deterministic decoding, hashing (via proven SHA-256 algorithm) of generated tokens, lightweight internal activation summaries (represented by float probe values), then logged to JSON.
+Runlock approaches this by combining deterministic decoding, cryptographic hashing (SHA-256) of generated tokens, lightweight internal activation summaries (float probes), and structured JSON logging.
 
 It is intentionally narrow in scope: a harness designed to make multi-turn model execution repeatable, comparable, and auditable across environments.
 
-Runlock is an **execution fingerprinting framework**. It combines output hashes and internal activation probes to capture evidence of *how* a model executed, rather than attempting to explain *why* a particular output was produced.
+Runlock is an **execution fingerprinting framework**. The framework is inspired by ideas from systems determinism, numerical reproducibility, and emerging work on internal representation analysis in neural networks.
+
+It combines output hashes and internal activation probes to capture evidence of *how* a model executed, rather than attempting to explain *why* a particular output was produced.
 
 It is **not** intended as a benchmarking tool, an evaluation suite, or a substitute for interpretability research. Instead, it provides low-level, reproducible artifacts that can potentially support engineering, debugging, forensic analysis, and future research into model behavior.
 
@@ -60,22 +62,28 @@ Please see included LICENSE file for details about how to use projects with an M
 
 ## Minimum Python Packages Required
 
+Pinned core dependencies:
 
-    "numpy": "2.2.6",
-    "transformers": "4.56.1",
-    "torch": "2.9.0+cu128"
+- numpy==2.2.6
+- transformers==4.56.1
+- torch==2.9.0+cu128
+- accelerate (required when using `device_map` / loading patterns that rely on it)
 
-You can also look inside the Makefile for clues about what gets 'auto installed' should you go down that path
+See the Makefile for the canonical install path.
 
 ---
 
 ## Core Scripts
+
 This repository intentionally contains only two canonical execution paths:
 
-| File                       | Description                                                               |
-|----------------------------|---------------------------------------------------------------------------|
-| `runlock_cpu_baseline_.py` | MAIN CPU runner - use this if you don't have a GPU (slower)               |
-| `runlock_gpu_baseline_.py` | MAIN GPU runner - Minimum 8Gb Graphics Card recommended (faster than CPU) |
+| File                       | Description |
+|----------------------------|-------------|
+| `runlock_cpu_baseline_.py` | CPU reference runner (maximal determinism; slower). |
+| `runlock_gpu_baseline_.py` | GPU reference runner (best-effort determinism; faster). |
+
+**GPU note:** A modern NVIDIA GPU is recommended. Minimum VRAM will depend on model choice.
+
 
 
 ---
