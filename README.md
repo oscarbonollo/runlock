@@ -2,11 +2,11 @@
 
 Runlock is a minimalist framework for producing deterministic, traceable execution fingerprints of neural language models.
 
-Given a fixed interaction, it provies a lightweight set of tools to answer a simple question:
+Given a fixed interaction, it provides a lightweight set of tools to answer a simple question:
 
 *"Did this model execute identically in this context?"*
 
-Runlock proposes a way to achieve this by combining deterministic decoding, cryptographic hashing of generated tokens, lightweight internal activation summaries, and structured JSON logging.
+Runlock approaches this by combining deterministic decoding, hashing (via proven SHA-256 algorithm) of generated tokens, lightweight internal activation summaries (represented by float probe values), then logged to JSON.
 
 It is intentionally narrow in scope: a harness designed to make multi-turn model execution repeatable, comparable, and auditable across environments.
 
@@ -21,7 +21,7 @@ Imagine that you walk through a shallow water stream repeatedly. You have walked
 
 Runlock attempts to take this analogy to the extreme when looking at the internal activation state, or the 'hidden' state of a neural network. It reaches down, picks up some 'pebbles' (float point values) to remind us of a path we have taken previously.
 
-The output Runlock provides, much like the rocks, is something physical, something that your hardware is actually doing that is not fake, and is based on a real machine calculation, therefore, it is deterministic, not probablistic.
+The output Runlock provides, much like the rocks, is something physical, something that your hardware is actually doing that is not fake, and is based on a real machine calculation.
 
 If by some chance the stream is altered, and the pebbles are displaced, we should be able to observe this at even the slightest change.
 
@@ -50,12 +50,13 @@ Please see included LICENSE file for details about how to use projects with an M
 
 ## Prerequisites
 
-- Python 3.10 (preferable - this was built and tested on 3.10.11)
-- You can try other versions of Python, as well as the dependncies but these are **untested** use at your own peril.
-- Tested working on Windows 11 and EC2 AMI Ubuntu 22.04 
-- Preferably 64-bit cpu, untested on 32-bit or alternative architectures
-- Recommended to make a virtual environment, not run against your system Python.
-- This framework assumes you understand Python and how to install packages and run python scripts.
+- **Python 3.10** (recommended; built and tested on **3.10.11**)
+- Tested on **Windows 11** and **Ubuntu 22.04 (EC2)**
+- 64-bit CPU (32-bit and alternative architectures are untested)
+- **Strongly Recommended:** For Python use a virtual environment (do not install into system Python)
+### Notes on determinism
+- **CPU runs** are intended to be maximally reproducible.
+- **GPU runs** are best-effort deterministic: exact matches are strongest when GPU model + driver + CUDA/PyTorch stack are held constant.
 
 ## Minimum Python Packages Required
 
