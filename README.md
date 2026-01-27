@@ -6,24 +6,24 @@ Given a fixed interaction, it provides a lightweight set of tools to answer a si
 
 *"Did this model execute identically in this context?"*
 
-Runlock approaches this by combining deterministic decoding, cryptographic hashing (SHA-256) of generated tokens, lightweight internal activation summaries (float probes), and structured JSON logging.
+Runlock approaches this by combining deterministic decoding, cryptographic hashing (SHA-256) of generated tokens, lightweight internal activation summaries (float probes), and results in a structured, JSON logfile.
 
 It is intentionally narrow in scope: a harness designed to make multi-turn model execution repeatable, comparable, and auditable across environments.
 
-Runlock is an **execution fingerprinting framework**. The framework is inspired by ideas from systems determinism, numerical reproducibility, and emerging work on internal representation analysis in neural networks.
+The framework is inspired by ideas from systems determinism, numerical reproducibility, and emerging work on internal representation analysis in neural networks.
 
 It combines output hashes and internal activation probes to capture evidence of *how* a model executed, rather than attempting to explain *why* a particular output was produced.
 
-It is **not** intended as a benchmarking tool, an evaluation suite, or a substitute for interpretability research. Instead, it provides low-level, reproducible artifacts that can potentially support engineering, debugging, forensic analysis, and future research into model behavior.
+It is not intended as a  benchmarking tool, an evaluation suite, or a substitute for interpretability research. Instead, it proposes the idea of low-level, reproducible and easily distributable artifacts that can potentially support engineering, debugging, forensic analysis, and future research into the computer science behind model behaviors.
 
 ---
 
 ## Philosophy
-Imagine that you walk through a shallow water stream repeatedly. You have walked this path before, you can see the same rocks and pebbles, you can hear the same sound your footsteps make, and you can pick up the rocks and pebbles, and put them down where you found them.
+Imagine that you walk through a shallow water stream repeatedly. You have walked this path before, you can see the same rocks and pebbles, you can hear the same sound your footsteps make, you can pick up the rocks and pebbles, then put them down if you choose to.
 
-Runlock attempts to take this analogy to the extreme when looking at the internal activation state, or the 'hidden' state of a neural network. It reaches down, picks up some 'pebbles' (float point values) to remind us of a path we have taken previously.
+Runlock attempts to take this analogy to the extreme when looking at the internal activation state, or the 'hidden' state of a neural network. It reaches down, picks up some 'pebbles' (float point values) to remind us of a path we have taken previously, then puts them down again (record to a logfile) as a reminder of the path we once walked.
 
-The output Runlock provides, much like the rocks, is something physical, something that your hardware is actually doing that is not fake, and is based on a real machine calculation.
+The output Runlock provides, much like the objects we interacted with in the water stream, is something physical, something that your hardware is actually doing that is not fake, and is based on a real machine calculation.
 
 If by some chance the stream is altered, and the pebbles are displaced, we should be able to observe this at even the slightest change.
 
@@ -73,6 +73,24 @@ See the Makefile for the canonical install path.
 
 ---
 
+## Min Hardware Specs
+- Physical cores: 2
+- Threads : 4
+- HDD Space: 30gb
+- 16GB RAM 
+- 16GB VRAM 
+
+## Comfortable Hardware Specs
+- Physical cores: 4
+- Threads : 8
+- HDD Space: 50+gb
+- 32GB RAM 
+- 16GB VRAM 
+
+Running with the minimum hardware specs may need use of swapfiles and other sorcery.
+
+---
+
 ## Core Scripts
 
 This repository intentionally contains only two canonical execution paths:
@@ -84,16 +102,14 @@ This repository intentionally contains only two canonical execution paths:
 
 **GPU note:** A modern NVIDIA GPU is recommended. Minimum VRAM will depend on model choice.
 
-
-
 ---
 ## Optional Scripts
 These are not required to run Runlock, just additional utilities and information what these are for.
 
-| File             | Description                                                                                                                                                             |
-|------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `env_details.py` | A non-PII script that records important details about your machine and python environment                                                                               |
-| `Makefile`       | This is for users of the Make unix program and will install all Runlock dependencies. I will only provide best-effort support but tested on Windows and Ubuntu working. |
+| File             | Description                                                                                                                                |
+|------------------|--------------------------------------------------------------------------------------------------------------------------------------------|
+| `env_details.py` | OPTIONAL: A script which tells you all of the important information about your python and OS that Runlock cares about (informational only) |
+| `Makefile`       | OPTIONAL: This is for users of the Make unix program and will install all Runlock dependencies and venv depending which OS you use.        |
 ---
 
 ## What a Run Produces
