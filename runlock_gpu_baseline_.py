@@ -24,7 +24,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 # Avoid tokenizer parallelism noise
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-# Fixed thread counts (still relevant for tokenizer and any CPU-side work)
+# Default thread counts for CPU-side work, only if not already set.
+# Note: torch is already imported at this point, so these may not take effect.
 os.environ.setdefault("OMP_NUM_THREADS", "4")
 os.environ.setdefault("MKL_NUM_THREADS", "4")
 
@@ -46,7 +47,7 @@ DEFAULT_USER_TURNS = [
     "Explain the reasoning in one sentence.",
 ]
 
-# Strictly GPU (you asked for GPU). If you prefer fallback-to-CPU, change this.
+# GPU only: fail fast instead of silently falling back to CPU
 if not torch.cuda.is_available():
     raise RuntimeError(
         "CUDA is not available. Install CUDA-enabled PyTorch and ensure an NVIDIA GPU is present."
@@ -80,7 +81,7 @@ torch.backends.cudnn.allow_tf32 = False
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
-# Keep denormal behavior consistent (more relevant on CPU, harmless here)
+# Flush denormals to zero (CPU-only setting; no effect on CUDA kernels)
 torch.set_flush_denormal(True)
 
 # ------------------------------------------------------------
@@ -92,7 +93,9 @@ def load_model_and_tokenizer():
     """
     Load tokenizer and model once on GPU in full precision (fp32).
 
-    Cached so subsequent runs in the same process do not reload weights.
+    Memoised with lru_cache: repeat calls within the same Python process reuse
+    the loaded weights. Nothing is cached between separate script runs (beyond
+    the Hugging Face download cache on disk).
     """
     print("Loading model and tokenizer...")
 
@@ -114,7 +117,8 @@ def load_model_and_tokenizer():
     model.to(DEVICE)
     model.eval()
 
-    # Warm-up call to stabilize first-run behavior
+    # Warm-up call so one-off initialisation cost isn't counted in turn 1's timing
+    # (does not affect generated tokens)
     _ = model.generate(**tok("hi", return_tensors="pt").to(DEVICE), max_new_tokens=1)
 
     return tok, model
@@ -151,7 +155,11 @@ def build_prompt(history):
 def compute_float_probe(model, token_ids: np.ndarray):
     """
     Compute a lightweight activation fingerprint from the final hidden layer
-    at start, midpoint, and end token positions.
+    at the start, midpoint, and end token positions.
+
+    This is a separate forward pass over the finished sequence (KV cache off),
+    run after generation, so it fingerprints a recomputation rather than the
+    exact kernels used during generate().
     """
     seq_len = int(token_ids.shape[0])
     if seq_len == 0:
@@ -196,7 +204,10 @@ def compute_float_probe(model, token_ids: np.ndarray):
 
 def generate_turn(tok, model, history):
     """
-    Run a single deterministic generation step.
+    Run one assistant turn: greedy-decode up to MAX_NEW tokens from the history.
+
+    Returns the full sequence (prompt tokens + generated tokens), both as
+    token IDs and decoded text, so the hash and text include the prompt.
     """
     reset_seeds(SEED)
 
@@ -212,7 +223,7 @@ def generate_turn(tok, model, history):
             max_new_tokens=MAX_NEW,
             pad_token_id=tok.pad_token_id,
             eos_token_id=tok.eos_token_id,
-            use_cache=False,  # CHANGED: disable KV-cache to match the CPU "no caching" intent
+            use_cache=False,  # KV cache OFF: every step recomputes the full sequence (the CPU runner leaves it on)
             return_dict_in_generate=True,
             output_scores=False,
         )
@@ -222,7 +233,7 @@ def generate_turn(tok, model, history):
     seq_t = out.sequences[0].detach().to("cpu")
     seq = seq_t.numpy()
 
-    # Decode on CPU tensor (keeps behavior consistent)
+    # Decode the full sequence (prompt + generated tokens)
     text = tok.decode(seq_t, skip_special_tokens=True)
 
     float_probe = compute_float_probe(model, seq)

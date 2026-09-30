@@ -20,13 +20,15 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 # Environment setup (CPU-only, stable threading)
 # ------------------------------------------------------------
 
-# Force CPU for maximum determinism across machines
+# Hide all GPUs so everything runs on CPU (set before any CUDA initialisation)
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 # Avoid tokenizer parallelism noise
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-# Fixed thread counts (keep constant for reproducibility)
+# Default thread counts, only if not already set in the environment.
+# Note: torch is already imported at this point, so these may not take effect;
+# the log records these env vars, not torch.get_num_threads().
 os.environ.setdefault("OMP_NUM_THREADS", "4")
 os.environ.setdefault("MKL_NUM_THREADS", "4")
 
@@ -34,7 +36,7 @@ os.environ.setdefault("MKL_NUM_THREADS", "4")
 # Parameters
 # ------------------------------------------------------------
 SEED = 42
-MODEL_ID = "microsoft/phi-2"  # CHANGED: was "mistralai/Mistral-7B-Instruct-v0.2"
+MODEL_ID = "microsoft/phi-2"
 MAX_NEW = 128
 MAX_TURNS = 32
 
@@ -67,24 +69,25 @@ torch.set_flush_denormal(True)
 @lru_cache(maxsize=1)
 def load_model_and_tokenizer():
     """
-    Load tokenizer and model once on CPU
-    Cached so subsequent runs in the same process do not reload weights.
+    Load tokenizer and model on CPU in full precision (fp32).
+    Memoised with lru_cache: repeat calls within the same Python process reuse
+    the loaded weights. Nothing is cached between separate script runs (beyond
+    the Hugging Face download cache on disk).
     """
     print("Loading model and tokenizer...")
 
-    # CHANGED: Phi-2 often requires trust_remote_code=True depending on transformers version
-    # CHANGED: use_fast=False to remove variability between fast/slow tokenizer implementations
+    # trust_remote_code: older transformers versions need Phi-2's custom model code
+    # use_fast=False: pin the slow (Python) tokenizer so the fast/slow choice can't vary
     tok = AutoTokenizer.from_pretrained(
         MODEL_ID,
         trust_remote_code=True,
         use_fast=False,
     )
 
-    # Keep: Phi-2 commonly has no pad token; safest deterministic default is pad=eos
+    # Phi-2 has no pad token; use EOS as pad so padding is always defined
     if tok.pad_token_id is None and tok.eos_token_id is not None:
         tok.pad_token = tok.eos_token
 
-    # CHANGED: trust_remote_code=True for Phi-2 compatibility
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_ID,
         device_map="cpu",
@@ -93,7 +96,8 @@ def load_model_and_tokenizer():
     )
     model.eval()
 
-    # Warm-up call to stabilize first-run behavior
+    # Warm-up call so one-off initialisation cost isn't counted in turn 1's timing
+    # (does not affect generated tokens)
     _ = model.generate(**tok("hi", return_tensors="pt"), max_new_tokens=1)
 
     return tok, model
@@ -130,7 +134,11 @@ def build_prompt(history):
 def compute_float_probe(model, token_ids: np.ndarray):
     """
     Compute a lightweight activation fingerprint from the final hidden layer
-    at start, midpoint, and end of computing of token positions.
+    at the start, midpoint, and end token positions.
+
+    This is a separate forward pass over the finished sequence (KV cache off),
+    run after generation, so it fingerprints a recomputation rather than the
+    exact kernels used during generate().
     """
     seq_len = int(token_ids.shape[0])
     if seq_len == 0:
@@ -175,7 +183,10 @@ def compute_float_probe(model, token_ids: np.ndarray):
 
 def generate_turn(tok, model, history):
     """
-    Run a single deterministic generation step.
+    Run one assistant turn: greedy-decode up to MAX_NEW tokens from the history.
+
+    Returns the full sequence (prompt tokens + generated tokens), both as
+    token IDs and decoded text, so the hash and text include the prompt.
     """
     reset_seeds(SEED)
 
@@ -191,12 +202,13 @@ def generate_turn(tok, model, history):
             max_new_tokens=MAX_NEW,
             pad_token_id=tok.pad_token_id,
             eos_token_id=tok.eos_token_id,
+            # use_cache not set: KV cache is ON (transformers default), unlike the GPU runner
             return_dict_in_generate=True,
             output_scores=False,
         )
     elapsed = time.perf_counter() - start
 
-    # CHANGED: decode from the CPU-copied tensor to keep the forensic artifact consistent
+    # Full sequence (prompt + generated) as token IDs and decoded text
     seq_t = out.sequences[0].detach().to("cpu")
     seq = seq_t.numpy()
     text = tok.decode(seq_t, skip_special_tokens=True)
@@ -244,7 +256,6 @@ def run_dialog(user_turns):
             "MKL_NUM_THREADS": os.environ.get("MKL_NUM_THREADS"),
         },
         "model_id": MODEL_ID,
-        # ADDED: make padding policy auditable (helps future batching/agentic stacks)
         "pad_token_id": tok.pad_token_id,
         "eos_token_id": tok.eos_token_id,
         "pad_equals_eos": (tok.pad_token_id == tok.eos_token_id),
